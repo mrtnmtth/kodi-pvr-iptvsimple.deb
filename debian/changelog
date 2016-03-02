@@ -1,3 +1,9 @@
+kodi-pvr-iptvsimple (1.12.11+git20160220-1) UNRELEASED; urgency=medium
+
+  * Imported Upstream version 1.12.11+git20160220
+
+ -- Balint Reczey <balint@balintreczey.hu>  Wed, 02 Mar 2016 21:25:43 +0100
+
 kodi-pvr-iptvsimple (1.11.5+git20150717-1) unstable; urgency=medium
 
   * Create packaging compliant to Debian Policy
