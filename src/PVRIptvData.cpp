@@ -716,6 +716,7 @@ PVR_ERROR PVRIptvData::GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &
       tag.iEpisodeNumber      = 0;     /* not supported */
       tag.iEpisodePartNumber  = 0;     /* not supported */
       tag.strEpisodeName      = NULL;  /* not supported */
+      tag.iFlags              = EPG_TAG_FLAG_UNDEFINED;
 
       PVR->TransferEpgEntry(handle, &tag);
 
@@ -967,14 +968,18 @@ int PVRIptvData::GetCachedFileContents(const std::string &strCachedName, const s
 
 void PVRIptvData::ApplyChannelsLogos()
 {
-  if (m_strLogoPath.empty())
-    return;
-
   std::vector<PVRIptvChannel>::iterator channel;
   for(channel = m_channels.begin(); channel < m_channels.end(); ++channel)
   {
     if (!channel->strTvgLogo.empty())
-      channel->strLogoPath = PathCombine(m_strLogoPath, channel->strTvgLogo);
+    {
+      if (!m_strLogoPath.empty() 
+        // special proto
+        && channel->strTvgLogo.find("://") == std::string::npos)
+        channel->strLogoPath = PathCombine(m_strLogoPath, channel->strTvgLogo);
+      else
+        channel->strLogoPath = channel->strTvgLogo;
+    }
   }
 }
 
