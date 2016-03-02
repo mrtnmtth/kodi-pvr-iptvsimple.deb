@@ -1,0 +1,25 @@
+From 6ccfebd93d24ba4999d78129c7b9aee63f02db11 Mon Sep 17 00:00:00 2001
+From: "h.udo" <hudokkow@gmail.com>
+Date: Sat, 23 Jan 2016 18:00:00 +0000
+Subject: [PATCH] Fix build after rename of p8-platform
+
+---
+ CMakeLists.txt | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cb77e20..9c9af44 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -15,7 +15,7 @@ include_directories(${kodiplatform_INCLUDE_DIRS}
+                     ${ZLIB_INCLUDE_DIRS}
+                     ${PROJECT_SOURCE_DIR}/lib)
+ 
+-set(DEPLIBS ${platform_LIBRARIES}
++set(DEPLIBS ${p8-platform_LIBRARIES}
+             ${ZLIB_LIBRARIES})
+ 
+ message(STATUS "ZLIB_LIBRARIES: ${ZLIB_LIBRARIES}")
+-- 
+2.1.4
+

@@ -1,1 +1,3 @@
-01_use_cec-platform.patch
+0001-src-Update-to-p8-platform.patch
+0002-cmake-Update-to-p8-platform.patch
+0003-Fix-build-after-rename-of-p8-platform.patch
