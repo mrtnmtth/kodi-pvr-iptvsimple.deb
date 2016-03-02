@@ -4,7 +4,7 @@ Maintainer: Debian Multimedia Maintainers <pkg-multimedia-maintainers@lists.alio
 Uploaders: Balint Reczey <balint@balintreczey.hu>
 Build-Depends: debhelper (>= 9.0.0), cmake,
                libkodiplatform-dev (>= 17.0.0), kodi-addons-dev, zlib1g-dev
-Standards-Version: 3.9.6
+Standards-Version: 3.9.7
 Section: libs
 Homepage: https://github.com/kodi-pvr/pvr.iptvsimple.git
 Vcs-Git: git://anonscm.debian.org/pkg-multimedia/kodi-pvr-iptvsimple.git
