@@ -1,6 +1,9 @@
-kodi-pvr-iptvsimple (1.12.11+git20160220-1) UNRELEASED; urgency=medium
+kodi-pvr-iptvsimple (1.12.11+git20160220-1) unstable; urgency=medium
 
   * Imported Upstream version 1.12.11+git20160220
+  * Switch to p8-platform from (cec-)platform
+  * Bump standards version to 3.9.7
+  * Fix package description (Closes: #808746, #808597)
 
  -- Balint Reczey <balint@balintreczey.hu>  Wed, 02 Mar 2016 21:25:43 +0100
 
