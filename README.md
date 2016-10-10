@@ -1,4 +1,4 @@
-[![Build Status](https://travis-ci.org/kodi-pvr/pvr.iptvsimple.svg?branch=Jarvis)](https://travis-ci.org/kodi-pvr/pvr.iptvsimple)
+[![Build Status](https://travis-ci.org/kodi-pvr/pvr.iptvsimple.svg?branch=master)](https://travis-ci.org/kodi-pvr/pvr.iptvsimple)
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/5120/badge.svg)](https://scan.coverity.com/projects/5120)
 
 # IPTV Simple PVR
