@@ -1,3 +1,13 @@
+kodi-pvr-iptvsimple (2.4.3+git20160820-1) unstable; urgency=medium
+
+  * Imported Upstream version 2.4.3+git20160820
+  * Build-depend on latest libkodiplatform-dev and kodi-addons-dev
+  * Build-depend on kodi-addons-dev version which has all the needed headers
+  * Drop obsoleted patches
+  * Drop hack to build with p8-platform
+
+ -- Balint Reczey <balint@balintreczey.hu>  Thu, 03 Nov 2016 22:47:39 +0100
+
 kodi-pvr-iptvsimple (1.12.11+git20160220-1) unstable; urgency=medium
 
   * Imported Upstream version 1.12.11+git20160220
