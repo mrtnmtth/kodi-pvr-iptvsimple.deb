@@ -329,10 +329,11 @@ bool PVRIptvData::LoadPlayList(void)
   char szLine[1024];
   while(stream.getline(szLine, 1024)) 
   {
-  
     std::string strLine(szLine);
     strLine = StringUtils::TrimRight(strLine, " \t\r\n");
     strLine = StringUtils::TrimLeft(strLine, " \t");
+
+    XBMC->Log(LOG_DEBUG, "Read line: '%s'", strLine.c_str());
 
     if (strLine.empty())
     {
@@ -354,7 +355,10 @@ bool PVRIptvData::LoadPlayList(void)
       }
       else
       {
-        break;
+        XBMC->Log(LOG_ERROR,
+                  "URL '%s' missing %s descriptor on line 1, attempting to "
+                  "parse it anyway.",
+                  m_strM3uUrl.c_str(), M3U_START_MARKER);
       }
     }
 
@@ -437,6 +441,10 @@ bool PVRIptvData::LoadPlayList(void)
     } 
     else if (strLine[0] != '#')
     {
+      XBMC->Log(LOG_DEBUG,
+                "Found URL: '%s' (current channel name: '%s')",
+                strLine.c_str(), tmpChannel.strChannelName.c_str());
+
       PVRIptvChannel channel;
       channel.iUniqueId         = GetChannelId(tmpChannel.strChannelName.c_str(), strLine.c_str());
       channel.iChannelNumber    = iChannelNum++;
@@ -749,9 +757,12 @@ int PVRIptvData::ParseDateTime(std::string& strDate, bool iDateFormat)
 {
   struct tm timeinfo;
   memset(&timeinfo, 0, sizeof(tm));
+  char sign = '+';
+  int hours = 0;
+  int minutes = 0;
 
   if (iDateFormat)
-    sscanf(strDate.c_str(), "%04d%02d%02d%02d%02d%02d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec);
+    sscanf(strDate.c_str(), "%04d%02d%02d%02d%02d%02d %c%02d%02d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec, &sign, &hours, &minutes);
   else
     sscanf(strDate.c_str(), "%02d.%02d.%04d%02d:%02d:%02d", &timeinfo.tm_mday, &timeinfo.tm_mon, &timeinfo.tm_year, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec);
 
@@ -759,7 +770,22 @@ int PVRIptvData::ParseDateTime(std::string& strDate, bool iDateFormat)
   timeinfo.tm_year -= 1900;
   timeinfo.tm_isdst = -1;
 
-  return mktime(&timeinfo);
+  std::time_t current_time;
+  std::time(&current_time);
+  long offset = 0;
+#ifndef TARGET_WINDOWS
+  offset = -std::localtime(&current_time)->tm_gmtoff;
+#else
+  _get_timezone(&offset);
+#endif // TARGET_WINDOWS
+  
+  long offset_of_date = (hours * 60 * 60) + (minutes * 60);
+  if (sign == '-') 
+  {
+    offset_of_date = -offset_of_date;
+  }
+
+  return mktime(&timeinfo) - offset_of_date - offset;
 }
 
 PVRIptvChannel * PVRIptvData::FindChannel(const std::string &strId, const std::string &strName)
