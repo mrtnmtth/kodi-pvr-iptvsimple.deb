@@ -1,4 +1,11 @@
-kodi-pvr-iptvsimple (2.4.4+git20170214-0+mtt1) UNRELEASED; urgency=medium
+kodi-pvr-iptvsimple (2.4.14-0+mtt1) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Imported Upstream version 2.4.14
+
+ -- mttronc <mrtn.mtth@gmx.de>  Tue, 05 Sep 2017 23:43:52 +0200
+
+kodi-pvr-iptvsimple (2.4.11+git20170214-0+mtt1) unstable; urgency=medium
 
   * Non-maintainer upload.
   * Imported Upstream version 2.4.11+git20170214
