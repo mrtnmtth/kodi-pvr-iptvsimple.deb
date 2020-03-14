@@ -22,28 +22,42 @@
  *
  */
 
-#include <sstream>
-#include <string>
+#include <cctype>
+#include <chrono>
+#include <cmath>
+#include <ctime>
 #include <fstream>
+#include <iomanip>
 #include <map>
+#include <regex>
+#include <sstream>
 #include <stdexcept>
+#include <string>
+
 #include "zlib.h"
 #include "rapidxml/rapidxml.hpp"
 #include "PVRIptvData.h"
 #include "p8-platform/util/StringUtils.h"
+#include "client.h"
 
 #define M3U_START_MARKER        "#EXTM3U"
 #define M3U_INFO_MARKER         "#EXTINF"
 #define TVG_INFO_ID_MARKER      "tvg-id="
+#define TVG_INFO_ID_MARKER_UC   "tvg-ID=" //some providers incorrecty use an uppercase ID.
 #define TVG_INFO_NAME_MARKER    "tvg-name="
 #define TVG_INFO_LOGO_MARKER    "tvg-logo="
 #define TVG_INFO_SHIFT_MARKER   "tvg-shift="
 #define TVG_INFO_CHNO_MARKER    "tvg-chno="
 #define GROUP_NAME_MARKER       "group-title="
+#define KODIPROP_MARKER         "#KODIPROP:"
+#define EXTVLCOPT_MARKER        "#EXTVLCOPT:"
 #define RADIO_MARKER            "radio="
+#define PLAYLIST_TYPE_MARKER    "#EXT-X-PLAYLIST-TYPE:"
 #define CHANNEL_LOGO_EXTENSION  ".png"
 #define SECONDS_IN_DAY          86400
 #define GENRES_MAP_FILENAME     "genres.xml"
+#define STAR_RATING_SCALE       10.0f
+#define REMOTE_PATH_TYPE        1
 
 using namespace ADDON;
 using namespace rapidxml;
@@ -61,6 +75,22 @@ inline bool GetNodeValue(const xml_node<Ch> * pRootNode, const char* strTag, std
 }
 
 template<class Ch>
+inline bool GetJoinedNodeValues(const xml_node<Ch>* pRootNode, const char* strTag, std::string& strStringValue)
+{
+  for (xml_node<Ch>* pChildNode = pRootNode->first_node(strTag); pChildNode; pChildNode = pChildNode->next_sibling(strTag))
+  {
+    if (pChildNode)
+    {
+      if (!strStringValue.empty())
+        strStringValue += ",";
+      strStringValue += pChildNode->value();
+    }
+  }
+
+  return !strStringValue.empty();
+}
+
+template<class Ch>
 inline bool GetAttributeValue(const xml_node<Ch> * pNode, const char* strAttributeName, std::string& strStringValue)
 {
   xml_attribute<Ch> *pAttribute = pNode->first_attribute(strAttributeName);
@@ -72,11 +102,104 @@ inline bool GetAttributeValue(const xml_node<Ch> * pNode, const char* strAttribu
   return true;
 }
 
+namespace
+{
+
+// Adapted from https://stackoverflow.com/a/31533119
+
+// Conversion from UTC date to second, signed 64-bit adjustable epoch version.
+// Written by François Grieu, 2015-07-21; public domain.
+
+long long MakeTime(int year, int month, int day)
+{
+  return static_cast<long long>(year) * 365 + year / 4 - year / 100 * 3 / 4 + (month + 2) * 153 / 5 + day;
+}
+
+long long GetUTCTime(int year, int mon, int mday, int hour, int min, int sec)
+{
+  int m = mon - 1;
+  int y = year + 100;
+
+  if (m < 2)
+  {
+    m += 12;
+    --y;
+  }
+
+  return (((MakeTime(y, m, mday) - MakeTime(1970 + 99, 12, 1)) * 24 + hour) * 60 + min) * 60 + sec;
+}
+
+long long ParseDateTime(const std::string& strDate)
+{
+  int year = 2000;
+  int mon = 1;
+  int mday = 1;
+  int hour = 0;
+  int min = 0;
+  int sec = 0;
+  char offset_sign = '+';
+  int offset_hours = 0;
+  int offset_minutes = 0;
+
+  sscanf(strDate.c_str(), "%04d%02d%02d%02d%02d%02d %c%02d%02d", &year, &mon, &mday, &hour, &min, &sec, &offset_sign, &offset_hours, &offset_minutes);
+
+  long offset_of_date = (offset_hours * 60 + offset_minutes) * 60;
+  if (offset_sign == '-')
+    offset_of_date = -offset_of_date;
+
+  return GetUTCTime(year, mon, mday, hour, min, sec) - offset_of_date;
+}
+
+int ParseStarRating(const std::string& starRatingString)
+{
+  float starRating = 0;
+  float starRatingScale;
+
+  int ret = std::sscanf(starRatingString.c_str(), "%f/%f", &starRating, &starRatingScale);
+
+  if (ret == 2 && starRatingScale != STAR_RATING_SCALE && starRatingScale != 0.0f)
+  {
+    starRating /= starRatingScale;
+    starRating *= 10;
+  }
+
+  if (ret >= 1 && starRating > STAR_RATING_SCALE)
+    starRating = STAR_RATING_SCALE;
+
+  return static_cast<int>(std::round(starRating));
+}
+
+// http://stackoverflow.com/a/17708801
+const std::string UrlEncode(const std::string& value)
+{
+  std::ostringstream escaped;
+  escaped.fill('0');
+  escaped << std::hex;
+
+  for (auto c : value)
+  {
+    // Keep alphanumeric and other accepted characters intact
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~')
+    {
+      escaped << c;
+      continue;
+    }
+    // Any other characters are percent-encoded
+    escaped << '%' << std::setw(2) << int(static_cast<unsigned char>(c));
+  }
+
+  return escaped.str();
+}
+
+} // unnamed namespace
+
+
 PVRIptvData::PVRIptvData(void)
 {
   m_strXMLTVUrl   = g_strTvgPath;
   m_strM3uUrl     = g_strM3UPath;
   m_strLogoPath   = g_strLogoPath;
+  m_logoPathType  = g_logoPathType;
   m_iEPGTimeShift = g_iEPGTimeShift;
   m_bTSOverride   = g_bTSOverride;
   m_iLastStart    = 0;
@@ -87,8 +210,7 @@ PVRIptvData::PVRIptvData(void)
   m_epg.clear();
   m_genres.clear();
 
-  if (LoadPlayList())
-    XBMC->QueueNotification(QUEUE_INFO, "%d channels loaded.", m_channels.size());
+  LoadPlayList();
 }
 
 void *PVRIptvData::Process(void)
@@ -106,6 +228,9 @@ PVRIptvData::~PVRIptvData(void)
 
 bool PVRIptvData::LoadEPG(time_t iStart, time_t iEnd)
 {
+  auto started = std::chrono::high_resolution_clock::now();
+  XBMC->Log(LOG_DEBUG, "%s EPG Load Start", __FUNCTION__);
+
   if (m_strXMLTVUrl.empty())
   {
     XBMC->Log(LOG_NOTICE, "EPG file path is not configured. EPG not loaded.");
@@ -174,7 +299,7 @@ bool PVRIptvData::LoadEPG(time_t iStart, time_t iEnd)
   {
     xmlDoc.parse<0>(buffer);
   }
-  catch(parse_error p)
+  catch(parse_error& p)
   {
     XBMC->Log(LOG_ERROR, "Unable parse EPG XML: %s", p.what());
     return false;
@@ -195,23 +320,48 @@ bool PVRIptvData::LoadEPG(time_t iStart, time_t iEnd)
   xml_node<> *pChannelNode = NULL;
   for(pChannelNode = pRootElement->first_node("channel"); pChannelNode; pChannelNode = pChannelNode->next_sibling("channel"))
   {
-    std::string strName;
-    std::string strId;
-    if(!GetAttributeValue(pChannelNode, "id", strId))
-      continue;
-
-    GetNodeValue(pChannelNode, "display-name", strName);
-    if (FindChannel(strId, strName) == NULL)
-      continue;
-
     PVRIptvEpgChannel epgChannel;
-    epgChannel.strId = strId;
-    epgChannel.strName = strName;
+
+    if (!GetAttributeValue(pChannelNode, "id", epgChannel.strId))
+      continue;
+
+    bool foundChannel = false;
+    bool haveDisplayNames = false;
+    for (xml_node<>* pDisplayNameNode = pChannelNode->first_node("display-name"); pDisplayNameNode; pDisplayNameNode = pDisplayNameNode->next_sibling("display-name"))
+    {
+      haveDisplayNames = true;
+
+      const std::string strName = pDisplayNameNode->value();
+      if (FindChannel(epgChannel.strId, strName))
+      {
+        foundChannel = true;
+        epgChannel.strNames.emplace_back(strName);
+      }
+    }
+
+    // If there are no display names just check if the id matches a channel
+    if (!haveDisplayNames && FindChannel(epgChannel.strId, ""))
+      foundChannel = true;
+
+    if (!foundChannel)
+      continue;
 
     // get icon if available
     xml_node<> *pIconNode = pChannelNode->first_node("icon");
     if (pIconNode == NULL || !GetAttributeValue(pIconNode, "src", epgChannel.strIcon))
       epgChannel.strIcon = "";
+
+    PVRIptvEpgChannel* existingEpgChannel = FindEpgForChannel(epgChannel.strId);
+    if (existingEpgChannel)
+    {
+      for (const std::string& displayName : epgChannel.strNames)
+        existingEpgChannel->strNames.emplace_back(displayName);
+
+      if (existingEpgChannel->strIcon.empty() && !epgChannel.strIcon.empty())
+        existingEpgChannel->strIcon = epgChannel.strIcon;
+
+      continue;
+    }
 
     m_epg.push_back(epgChannel);
   }
@@ -257,8 +407,8 @@ bool PVRIptvData::LoadEPG(time_t iStart, time_t iEnd)
       || !GetAttributeValue(pChannelNode, "stop", strStop))
       continue;
 
-    int iTmpStart = ParseDateTime(strStart);
-    int iTmpEnd = ParseDateTime(strStop);
+    long long iTmpStart = ParseDateTime(strStart);
+    long long iTmpEnd = ParseDateTime(strStop);
 
     if ( (iTmpEnd   + iMaxShiftTime < iStart)
       || (iTmpStart + iMinShiftTime > iEnd))
@@ -266,15 +416,63 @@ bool PVRIptvData::LoadEPG(time_t iStart, time_t iEnd)
 
     PVRIptvEpgEntry entry;
     entry.iBroadcastId = ++iBroadCastId;
+    entry.iChannelId = atoi(strId.c_str());
     entry.iGenreType = 0;
     entry.iGenreSubType = 0;
     entry.strPlotOutline = "";
-    entry.startTime = iTmpStart;
-    entry.endTime = iTmpEnd;
+    entry.startTime = static_cast<time_t>(iTmpStart);
+    entry.endTime = static_cast<time_t>(iTmpEnd);
+    entry.iYear = 0;
+    entry.firstAired = 0;
+    entry.iStarRating = 0;
+    entry.iSeasonNumber = 0;
+    entry.iEpisodeNumber = 0;
+    entry.iEpisodePartNumber = 0;
 
     GetNodeValue(pChannelNode, "title", entry.strTitle);
     GetNodeValue(pChannelNode, "desc", entry.strPlot);
     GetNodeValue(pChannelNode, "category", entry.strGenreString);
+    GetNodeValue(pChannelNode, "sub-title", entry.strEpisodeName);
+
+    std::string dateString;
+    GetNodeValue(pChannelNode, "date", dateString);
+    if (!dateString.empty())
+    {
+      static const std::regex dateRegex("^[1-9][0-9][0-9][0-9][0-9][1-9][0-9][1-9]");
+      if (std::regex_match(dateString, dateRegex))
+        entry.firstAired = static_cast<time_t>(ParseDateTime(dateString));
+
+      std::sscanf(dateString.c_str(), "%04d", &entry.iYear);
+    }
+
+    xml_node<>* pStarRatingNode = pChannelNode->first_node("star-rating");
+    if (pStarRatingNode)
+    {
+      std::string starRatingString;
+      GetNodeValue(pStarRatingNode, "value", starRatingString);
+
+      if (!starRatingString.empty())
+        entry.iStarRating = ParseStarRating(starRatingString);
+    }
+
+    std::vector<std::pair<std::string, std::string>> episodeNumbersList;
+    for (xml_node<>* pEpisodeNumNode = pChannelNode->first_node("episode-num"); pEpisodeNumNode; pEpisodeNumNode = pEpisodeNumNode->next_sibling("episode-num"))
+    {
+      std::string strEpisodeNumberSystem;
+      if (GetAttributeValue(pEpisodeNumNode, "system", strEpisodeNumberSystem))
+        episodeNumbersList.push_back({strEpisodeNumberSystem, pEpisodeNumNode->value()});
+    }
+
+    if (!episodeNumbersList.empty())
+      ParseEpisodeNumberInfo(episodeNumbersList, entry);
+
+    xml_node<>* pCreditsNode = pChannelNode->first_node("credits");
+    if (pCreditsNode)
+    {
+      GetJoinedNodeValues(pCreditsNode, "actor", entry.strCast);
+      GetJoinedNodeValues(pCreditsNode, "director", entry.strDirector);
+      GetJoinedNodeValues(pCreditsNode, "writer", entry.strWriter);
+    }
 
     xml_node<> *pIconNode = pChannelNode->first_node("icon");
     if (pIconNode == NULL || !GetAttributeValue(pIconNode, "src", entry.strIconPath))
@@ -284,18 +482,102 @@ bool PVRIptvData::LoadEPG(time_t iStart, time_t iEnd)
   }
 
   xmlDoc.clear();
-  LoadGenres();
 
-  XBMC->Log(LOG_NOTICE, "EPG Loaded.");
+  LoadGenres();
 
   if (g_iEPGLogos > 0)
     ApplyChannelsLogosFromEPG();
 
+  int milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::high_resolution_clock::now() - started).count();
+
+  XBMC->Log(LOG_NOTICE, "%s EPG Loaded - %d (ms)", __FUNCTION__, milliseconds);
+
   return true;
+}
+
+bool PVRIptvData::ParseEpisodeNumberInfo(const std::vector<std::pair<std::string, std::string>>& episodeNumbersList, PVRIptvEpgEntry& entry)
+{
+  //First check xmltv_ns
+  for (const auto& pair : episodeNumbersList)
+  {
+    if (pair.first == "xmltv_ns" && ParseXmltvNsEpisodeNumberInfo(pair.second, entry))
+      return true;
+  }
+
+  //If not found try onscreen
+  for (const auto& pair : episodeNumbersList)
+  {
+    if (pair.first == "onscreen" && ParseOnScreenEpisodeNumberInfo(pair.second, entry))
+      return true;
+  }
+
+  return false;
+}
+
+bool PVRIptvData::ParseXmltvNsEpisodeNumberInfo(const std::string& episodeNumberString, PVRIptvEpgEntry& entry)
+{
+  size_t found = episodeNumberString.find(".");
+  if (found != std::string::npos)
+  {
+    std::string seasonString = episodeNumberString.substr(0, found);
+    std::string episodeString = episodeNumberString.substr(found + 1);
+    std::string episodePartString;
+
+    found = episodeString.find(".");
+    if (found != std::string::npos)
+    {
+      episodePartString = episodeString.substr(found + 1);
+      episodeString = episodeString.substr(0, found);
+    }
+
+    if (std::sscanf(seasonString.c_str(), "%d", &entry.iSeasonNumber) == 1)
+      entry.iSeasonNumber++;
+
+    if (std::sscanf(episodeString.c_str(), "%d", &entry.iEpisodeNumber) == 1)
+      entry.iEpisodeNumber++;
+
+    if (!episodePartString.empty())
+    {
+      int totalNumberOfParts;
+      int numElementsParsed = std::sscanf(episodePartString.c_str(), "%d/%d", &entry.iEpisodePartNumber, &totalNumberOfParts);
+
+      if (numElementsParsed == 2)
+        entry.iEpisodePartNumber++;
+      else if (numElementsParsed == 1)
+        entry.iEpisodePartNumber = 0;
+    }
+  }
+
+  return entry.iEpisodeNumber != 0;
+}
+
+bool PVRIptvData::ParseOnScreenEpisodeNumberInfo(const std::string& episodeNumberString, PVRIptvEpgEntry& entry)
+{
+  static const std::regex numRegex("[ \\txX_\\.]");
+  const std::string text = std::regex_replace(episodeNumberString, numRegex, "");
+
+  std::smatch match;
+  static const std::regex epRegex("^[sS]([0-9][0-9]*)[eE][pP]?([0-9][0-9]*)$");
+  if (std::regex_match(text, match, epRegex))
+  {
+    if (match.size() == 3)
+    {
+      entry.iSeasonNumber = std::atoi(match[1].str().c_str());
+      entry.iEpisodeNumber = std::atoi(match[2].str().c_str());
+
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool PVRIptvData::LoadPlayList(void)
 {
+  auto started = std::chrono::high_resolution_clock::now();
+  XBMC->Log(LOG_DEBUG, "%s PlayList Load Start", __FUNCTION__);
+
   if (m_strM3uUrl.empty())
   {
     XBMC->Log(LOG_NOTICE, "Playlist file path is not configured. Channels not loaded.");
@@ -313,7 +595,7 @@ bool PVRIptvData::LoadPlayList(void)
 
   /* load channels */
   bool bFirst = true;
-
+  bool bIsRealTime  = true;
   int iChannelIndex     = 0;
   int iUniqueGroupId    = 0;
   int iChannelNum       = g_iStartNumber;
@@ -347,7 +629,7 @@ bool PVRIptvData::LoadPlayList(void)
       {
         strLine.erase(0, 3);
       }
-      if (StringUtils::Left(strLine, (int)strlen(M3U_START_MARKER)) == M3U_START_MARKER)
+      if (StringUtils::Left(strLine, strlen(M3U_START_MARKER)) == M3U_START_MARKER)
       {
         double fTvgShift = atof(ReadMarkerValue(strLine, TVG_INFO_SHIFT_MARKER).c_str());
         iEPGTimeShift = (int) (fTvgShift * 3600.0);
@@ -362,7 +644,7 @@ bool PVRIptvData::LoadPlayList(void)
       }
     }
 
-    if (StringUtils::Left(strLine, (int)strlen(M3U_INFO_MARKER)) == M3U_INFO_MARKER)
+    if (StringUtils::Left(strLine, strlen(M3U_INFO_MARKER)) == M3U_INFO_MARKER)
     {
       bool        bRadio       = false;
       double      fTvgShift    = 0;
@@ -374,6 +656,8 @@ bool PVRIptvData::LoadPlayList(void)
       std::string strTvgShift  = "";
       std::string strGroupName = "";
       std::string strRadio     = "";
+
+      iCurrentGroupId.clear();
 
       // parse line
       int iColon = (int)strLine.find(':');
@@ -387,7 +671,9 @@ bool PVRIptvData::LoadPlayList(void)
         tmpChannel.strChannelName = XBMC->UnknownToUTF8(strChnlName.c_str());
 
         // parse info
-        std::string strInfoLine = StringUtils::Mid(strLine, ++iColon, --iComma - iColon);
+        iColon++;
+        iComma--;
+        std::string strInfoLine = StringUtils::Mid(strLine, iColon, iComma - iColon);
 
         strTvgId      = ReadMarkerValue(strInfoLine, TVG_INFO_ID_MARKER);
         strTvgName    = ReadMarkerValue(strInfoLine, TVG_INFO_NAME_MARKER);
@@ -398,21 +684,25 @@ bool PVRIptvData::LoadPlayList(void)
         strTvgShift   = ReadMarkerValue(strInfoLine, TVG_INFO_SHIFT_MARKER);
 
         if (strTvgId.empty())
+          strTvgId = ReadMarkerValue(strInfoLine, TVG_INFO_ID_MARKER_UC);
+
+        if (strTvgId.empty())
         {
           char buff[255];
           sprintf(buff, "%d", atoi(strInfoLine.c_str()));
           strTvgId.append(buff);
         }
+        bool logoSetFromChannelName = false;
         if (strTvgLogo.empty())
         {
           strTvgLogo = strChnlName;
+          logoSetFromChannelName = true;
         }
-        fTvgShift = atof(strTvgShift.c_str());
-
-        if (!strChnlNo.empty()) 
+        if (!strChnlNo.empty())
         {
           iChannelNum = atoi(strChnlNo.c_str());
         }
+        fTvgShift = atof(strTvgShift.c_str());
 
         bRadio                = !StringUtils::CompareNoCase(strRadio, "true");
         tmpChannel.strTvgId   = strTvgId;
@@ -420,6 +710,15 @@ bool PVRIptvData::LoadPlayList(void)
         tmpChannel.strTvgLogo = XBMC->UnknownToUTF8(strTvgLogo.c_str());
         tmpChannel.iTvgShift  = (int)(fTvgShift * 3600.0);
         tmpChannel.bRadio     = bRadio;
+
+        // If remote type URL Encode and append as when built from channel name it would be missing
+        if (m_logoPathType == REMOTE_PATH_TYPE && logoSetFromChannelName)
+          tmpChannel.strTvgLogo = UrlEncode(tmpChannel.strTvgLogo);
+
+        if (tmpChannel.strTvgLogo.find("://") == std::string::npos &&
+            !StringUtils::EndsWithNoCase(tmpChannel.strTvgLogo, ".png") &&
+            !StringUtils::EndsWithNoCase(tmpChannel.strTvgLogo, ".jpg"))
+          tmpChannel.strTvgLogo += CHANNEL_LOGO_EXTENSION;
 
         if (strTvgShift.empty())
         {
@@ -429,9 +728,7 @@ bool PVRIptvData::LoadPlayList(void)
         if (!strGroupName.empty())
         {
           std::stringstream streamGroups(strGroupName);
-
           PVRIptvChannelGroup * pGroup;
-          iCurrentGroupId.clear();
 
           while(std::getline(streamGroups, strGroupName, ';'))
           {
@@ -452,15 +749,48 @@ bool PVRIptvData::LoadPlayList(void)
               iCurrentGroupId.push_back(pGroup->iGroupId);
             }
           }
-
         }
       }
+    }
+    else if (StringUtils::Left(strLine, strlen(KODIPROP_MARKER)) == KODIPROP_MARKER)
+    {
+      std::string value = ReadMarkerValue(strLine, KODIPROP_MARKER);
+      auto pos = value.find('=');
+      if (pos != std::string::npos)
+      {
+        std::string prop = value.substr(0,pos);
+        std::string propValue = value.substr(pos+1);
+        tmpChannel.properties.insert({prop, propValue});
+      }
+    }
+    else if (StringUtils::Left(strLine, strlen(EXTVLCOPT_MARKER)) == EXTVLCOPT_MARKER)
+    {
+      const std::string value = ReadMarkerValue(strLine, EXTVLCOPT_MARKER);
+      auto pos = value.find('=');
+      if (pos != std::string::npos)
+      {
+        const std::string prop = value.substr(0, pos);
+        const std::string propValue = value.substr(pos + 1);
+        tmpChannel.properties.insert({prop, propValue});
+
+        XBMC->Log(LOG_DEBUG,
+                  "Found #EXTVLCOPT property: '%s' value: '%s'",
+                  prop.c_str(), propValue.c_str());
+      }
+    }
+    else if (StringUtils::Left(strLine, strlen(PLAYLIST_TYPE_MARKER)) == PLAYLIST_TYPE_MARKER)
+    {
+      if (ReadMarkerValue(strLine, PLAYLIST_TYPE_MARKER) == "VOD")
+        bIsRealTime = false;
     }
     else if (strLine[0] != '#')
     {
       XBMC->Log(LOG_DEBUG,
                 "Found URL: '%s' (current channel name: '%s')",
                 strLine.c_str(), tmpChannel.strChannelName.c_str());
+
+      if (bIsRealTime)
+        tmpChannel.properties.insert({PVR_STREAM_PROPERTY_ISREALTIMESTREAM, "true"});
 
       PVRIptvChannel channel;
       channel.iUniqueId         = GetChannelId(tmpChannel.strChannelName.c_str(), strLine.c_str());
@@ -471,7 +801,22 @@ bool PVRIptvData::LoadPlayList(void)
       channel.strTvgLogo        = tmpChannel.strTvgLogo;
       channel.iTvgShift         = tmpChannel.iTvgShift;
       channel.bRadio            = tmpChannel.bRadio;
-      channel.strStreamURL      = strLine;
+      channel.properties        = tmpChannel.properties;
+      
+      auto propPair = channel.properties.find("http-user-agent");
+      if (propPair != channel.properties.end())
+      {
+        channel.strStreamURL = AddHeaderToStreamUrl(strLine, "user-agent", propPair->second);
+      }
+      else if (!g_userAgent.empty())
+      {
+        channel.strStreamURL = AddHeaderToStreamUrl(strLine, "user-agent", g_userAgent);
+      }
+      else
+      {
+        channel.strStreamURL = strLine;
+      }
+      
       channel.iEncryptionSystem = 0;
 
       iChannelNum++;
@@ -492,10 +837,17 @@ bool PVRIptvData::LoadPlayList(void)
       tmpChannel.strTvgLogo     = "";
       tmpChannel.iTvgShift      = 0;
       tmpChannel.bRadio         = false;
+      tmpChannel.properties.clear();
+      bIsRealTime = true;
     }
   }
 
   stream.clear();
+
+  int milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                      std::chrono::high_resolution_clock::now() - started).count();
+
+  XBMC->Log(LOG_NOTICE, "%s PlayList Loaded - %d (ms)", __FUNCTION__, milliseconds);
 
   if (m_channels.size() == 0)
   {
@@ -536,7 +888,7 @@ bool PVRIptvData::LoadGenres(void)
   {
     xmlDoc.parse<0>(buffer);
   }
-  catch (parse_error p)
+  catch (parse_error& p)
   {
     return false;
   }
@@ -572,11 +924,13 @@ bool PVRIptvData::LoadGenres(void)
 
 int PVRIptvData::GetChannelsAmount(void)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   return m_channels.size();
 }
 
 PVR_ERROR PVRIptvData::GetChannels(ADDON_HANDLE handle, bool bRadio)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   for (unsigned int iChannelPtr = 0; iChannelPtr < m_channels.size(); iChannelPtr++)
   {
     PVRIptvChannel &channel = m_channels.at(iChannelPtr);
@@ -589,7 +943,6 @@ PVR_ERROR PVRIptvData::GetChannels(ADDON_HANDLE handle, bool bRadio)
       xbmcChannel.bIsRadio          = channel.bRadio;
       xbmcChannel.iChannelNumber    = channel.iChannelNumber;
       strncpy(xbmcChannel.strChannelName, channel.strChannelName.c_str(), sizeof(xbmcChannel.strChannelName) - 1);
-      strncpy(xbmcChannel.strStreamURL, channel.strStreamURL.c_str(), sizeof(xbmcChannel.strStreamURL) - 1);
       xbmcChannel.iEncryptionSystem = channel.iEncryptionSystem;
       strncpy(xbmcChannel.strIconPath, channel.strLogoPath.c_str(), sizeof(xbmcChannel.strIconPath) - 1);
       xbmcChannel.bIsHidden         = false;
@@ -603,6 +956,7 @@ PVR_ERROR PVRIptvData::GetChannels(ADDON_HANDLE handle, bool bRadio)
 
 bool PVRIptvData::GetChannel(const PVR_CHANNEL &channel, PVRIptvChannel &myChannel)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   for (unsigned int iChannelPtr = 0; iChannelPtr < m_channels.size(); iChannelPtr++)
   {
     PVRIptvChannel &thisChannel = m_channels.at(iChannelPtr);
@@ -615,6 +969,7 @@ bool PVRIptvData::GetChannel(const PVR_CHANNEL &channel, PVRIptvChannel &myChann
       myChannel.strChannelName    = thisChannel.strChannelName;
       myChannel.strLogoPath       = thisChannel.strLogoPath;
       myChannel.strStreamURL      = thisChannel.strStreamURL;
+      myChannel.properties        = thisChannel.properties;
 
       return true;
     }
@@ -625,11 +980,13 @@ bool PVRIptvData::GetChannel(const PVR_CHANNEL &channel, PVRIptvChannel &myChann
 
 int PVRIptvData::GetChannelGroupsAmount(void)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   return m_groups.size();
 }
 
 PVR_ERROR PVRIptvData::GetChannelGroups(ADDON_HANDLE handle, bool bRadio)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   std::vector<PVRIptvChannelGroup>::iterator it;
   for (it = m_groups.begin(); it != m_groups.end(); ++it)
   {
@@ -651,6 +1008,7 @@ PVR_ERROR PVRIptvData::GetChannelGroups(ADDON_HANDLE handle, bool bRadio)
 
 PVR_ERROR PVRIptvData::GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHANNEL_GROUP &group)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   PVRIptvChannelGroup *myGroup;
   if ((myGroup = FindGroup(group.strGroupName)) != NULL)
   {
@@ -677,6 +1035,7 @@ PVR_ERROR PVRIptvData::GetChannelGroupMembers(ADDON_HANDLE handle, const PVR_CHA
 
 PVR_ERROR PVRIptvData::GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &channel, time_t iStart, time_t iEnd)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   std::vector<PVRIptvChannel>::iterator myChannel;
   for (myChannel = m_channels.begin(); myChannel < m_channels.end(); ++myChannel)
   {
@@ -713,16 +1072,16 @@ PVR_ERROR PVRIptvData::GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &
 
       tag.iUniqueBroadcastId  = myTag->iBroadcastId;
       tag.strTitle            = myTag->strTitle.c_str();
-      tag.iChannelNumber      = myTag->iChannelId;
+      tag.iUniqueChannelId    = channel.iUniqueId;
       tag.startTime           = myTag->startTime + iShift;
       tag.endTime             = myTag->endTime + iShift;
       tag.strPlotOutline      = myTag->strPlotOutline.c_str();
       tag.strPlot             = myTag->strPlot.c_str();
       tag.strOriginalTitle    = NULL;  /* not supported */
-      tag.strCast             = NULL;  /* not supported */
-      tag.strDirector         = NULL;  /* not supported */
-      tag.strWriter           = NULL;  /* not supported */
-      tag.iYear               = 0;     /* not supported */
+      tag.strCast             = myTag->strCast.c_str();
+      tag.strDirector         = myTag->strDirector.c_str();
+      tag.strWriter           = myTag->strWriter.c_str();
+      tag.iYear               = myTag->iYear;
       tag.strIMDBNumber       = NULL;  /* not supported */
       tag.strIconPath         = myTag->strIconPath.c_str();
       if (FindEpgGenre(myTag->strGenreString, iGenreType, iGenreSubType))
@@ -738,13 +1097,14 @@ PVR_ERROR PVRIptvData::GetEPGForChannel(ADDON_HANDLE handle, const PVR_CHANNEL &
         tag.strGenreDescription = myTag->strGenreString.c_str();
       }
       tag.iParentalRating     = 0;     /* not supported */
-      tag.iStarRating         = 0;     /* not supported */
+      tag.iStarRating         = myTag->iStarRating;
       tag.bNotify             = false; /* not supported */
-      tag.iSeriesNumber       = 0;     /* not supported */
-      tag.iEpisodeNumber      = 0;     /* not supported */
-      tag.iEpisodePartNumber  = 0;     /* not supported */
-      tag.strEpisodeName      = NULL;  /* not supported */
+      tag.iSeriesNumber       = myTag->iSeasonNumber;
+      tag.iEpisodeNumber      = myTag->iEpisodeNumber;
+      tag.iEpisodePartNumber  = myTag->iEpisodePartNumber;
+      tag.strEpisodeName      = myTag->strEpisodeName.c_str();
       tag.iFlags              = EPG_TAG_FLAG_UNDEFINED;
+      tag.firstAired          = myTag->firstAired;
 
       PVR->TransferEpgEntry(handle, &tag);
 
@@ -773,63 +1133,32 @@ int PVRIptvData::GetFileContents(std::string& url, std::string &strContent)
   return strContent.length();
 }
 
-int PVRIptvData::ParseDateTime(std::string& strDate, bool iDateFormat)
-{
-  struct tm timeinfo;
-  memset(&timeinfo, 0, sizeof(tm));
-  char sign = '+';
-  int hours = 0;
-  int minutes = 0;
-
-  if (iDateFormat)
-    sscanf(strDate.c_str(), "%04d%02d%02d%02d%02d%02d %c%02d%02d", &timeinfo.tm_year, &timeinfo.tm_mon, &timeinfo.tm_mday, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec, &sign, &hours, &minutes);
-  else
-    sscanf(strDate.c_str(), "%02d.%02d.%04d%02d:%02d:%02d", &timeinfo.tm_mday, &timeinfo.tm_mon, &timeinfo.tm_year, &timeinfo.tm_hour, &timeinfo.tm_min, &timeinfo.tm_sec);
-
-  timeinfo.tm_mon  -= 1;
-  timeinfo.tm_year -= 1900;
-  timeinfo.tm_isdst = -1;
-
-  std::time_t current_time;
-  std::time(&current_time);
-  long offset = 0;
-#ifndef TARGET_WINDOWS
-  offset = -std::localtime(&current_time)->tm_gmtoff;
-#else
-  _get_timezone(&offset);
-#endif // TARGET_WINDOWS
-
-  long offset_of_date = (hours * 60 * 60) + (minutes * 60);
-  if (sign == '-')
-  {
-    offset_of_date = -offset_of_date;
-  }
-
-  return mktime(&timeinfo) - offset_of_date - offset;
-}
-
 PVRIptvChannel * PVRIptvData::FindChannel(const std::string &strId, const std::string &strName)
 {
-  std::string strTvgName = strName;
-  StringUtils::Replace(strTvgName, ' ', '_');
-
-  std::vector<PVRIptvChannel>::iterator it;
-  for(it = m_channels.begin(); it < m_channels.end(); ++it)
+  for (auto& channel : m_channels)
   {
-    if (it->strTvgId == strId)
-      return &*it;
-
-    if (strTvgName == "")
-      continue;
-
-    if (it->strTvgName == strTvgName)
-      return &*it;
-
-    if (it->strChannelName == strName)
-      return &*it;
+    if (StringUtils::EqualsNoCase(channel.strTvgId, strId))
+      return &channel;
   }
 
-  return NULL;
+  if (strName.empty())
+    return nullptr;
+
+  const std::string strTvgName = std::regex_replace(strName, std::regex(" "), "_");
+  for (auto& channel : m_channels)
+  {
+    if (StringUtils::EqualsNoCase(channel.strTvgName, strTvgName) ||
+        StringUtils::EqualsNoCase(channel.strTvgName, strName))
+      return &channel;
+  }
+
+  for (auto& channel : m_channels)
+  {
+    if (StringUtils::EqualsNoCase(channel.strChannelName, strName))
+      return &channel;
+  }
+
+  return nullptr;
 }
 
 PVRIptvChannelGroup * PVRIptvData::FindGroup(const std::string &strName)
@@ -856,22 +1185,45 @@ PVRIptvEpgChannel * PVRIptvData::FindEpg(const std::string &strId)
   return NULL;
 }
 
+PVRIptvEpgChannel* PVRIptvData::FindEpgForChannel(const std::string& id)
+{
+  for (auto& epgChannel : m_epg)
+  {
+    if (StringUtils::EqualsNoCase(epgChannel.strId, id))
+      return &epgChannel;
+  }
+
+  return nullptr;
+}
+
 PVRIptvEpgChannel * PVRIptvData::FindEpgForChannel(PVRIptvChannel &channel)
 {
-  std::vector<PVRIptvEpgChannel>::iterator it;
-  for(it = m_epg.begin(); it < m_epg.end(); ++it)
+  for (auto& epgChannel : m_epg)
   {
-    if (it->strId == channel.strTvgId)
-      return &*it;
+    if (StringUtils::EqualsNoCase(epgChannel.strId, channel.strTvgId))
+      return &epgChannel;
+  }
 
-    std::string strName = it->strName;
-    StringUtils::Replace(strName, ' ', '_');
-    if (strName == channel.strTvgName
-      || it->strName == channel.strTvgName)
-      return &*it;
+  std::string strName;
+  for (auto& epgChannel : m_epg)
+  {
+    for (const std::string& strOrigName : epgChannel.strNames)
+    {
+      strName = std::regex_replace(strOrigName, std::regex(" "), "_");
 
-    if (it->strName == channel.strChannelName)
-      return &*it;
+      if (StringUtils::EqualsNoCase(strName, channel.strTvgName) ||
+          StringUtils::EqualsNoCase(strOrigName, channel.strTvgName))
+        return &epgChannel;
+    }
+  }
+
+  for (auto& epgChannel : m_epg)
+  {
+    for (const std::string& strOrigName : epgChannel.strNames)
+    {
+      if (StringUtils::EqualsNoCase(strOrigName, channel.strChannelName))
+        return &epgChannel;
+    }
   }
 
   return NULL;
@@ -1058,6 +1410,7 @@ void PVRIptvData::ApplyChannelsLogosFromEPG()
 
 void PVRIptvData::ReaplyChannelsLogos(const char * strNewPath)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   if (strlen(strNewPath) > 0)
   {
     m_strLogoPath = strNewPath;
@@ -1070,6 +1423,7 @@ void PVRIptvData::ReaplyChannelsLogos(const char * strNewPath)
 
 void PVRIptvData::ReloadEPG(const char * strNewPath)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   if (strNewPath != m_strXMLTVUrl)
   {
     m_strXMLTVUrl = strNewPath;
@@ -1088,6 +1442,7 @@ void PVRIptvData::ReloadEPG(const char * strNewPath)
 
 void PVRIptvData::ReloadPlayList(const char * strNewPath)
 {
+  P8PLATFORM::CLockObject lock(m_mutex);
   if (strNewPath != m_strM3uUrl)
   {
     m_strM3uUrl = strNewPath;
@@ -1136,8 +1491,28 @@ int PVRIptvData::GetChannelId(const char * strChannelName, const char * strStrea
   const char* strString = concat.c_str();
   int iId = 0;
   int c;
-  while (c = *strString++)
+  while ((c = *strString++))
     iId = ((iId << 5) + iId) + c; /* iId * 33 + c */
 
   return abs(iId);
+}
+
+std::string PVRIptvData::AddHeaderToStreamUrl (const std::string& url, const std::string& header, const std::string& value) const
+{
+  char separator = '|';
+  size_t found = url.find('|');
+
+  if (found != std::string::npos)
+  {
+    if (url.find(header + '=', found + 1) != std::string::npos)
+    {
+      return url;
+    }
+    else
+    {
+      separator = '&';
+    }
+  }
+
+  return url + separator + header + '=' + value;
 }

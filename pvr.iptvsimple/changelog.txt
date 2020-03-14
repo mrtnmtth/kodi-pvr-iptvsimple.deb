@@ -1,18 +1,137 @@
-v2.4.14
-- Backport: Added support for multiple groups per channel, separated by semicolon
+v3.9.8
+- Added: User-Agent support from advanced addon setting
 
-v2.4.13
-- fixed install path in the Debian package
-- remove line size limitation when parsing M3U files
+v3.8.8
+- Fixed: tvg-ID not accepted as an M3U tag
 
-v2.4.12
-- updated language files from Transifex
+v3.8.7
+- Fixed: Local channels logo with .jpg extension not working
 
-v2.4.10
-- added Channel number tvg-chno to m3u 
+v3.8.6
+- Fixed: tvg-id does not match a channel if no display-names in xmltv
+- Fixed: Combine multiple XMLTV channels sharing same id
 
-v2.4.9
-- Fix: Change the line lenght to 4k.
+v3.8.5
+- Fixed: Add channel logo extension for relative paths only
+- Update: update readme
+
+v3.8.4
+- Fix channel logos getting default extension
+
+v3.8.3
+- Speed up EPG loading
+
+v3.8.2
+- Update github wiki link in addon.xml
+
+v3.8.1
+- Fix compiler warnings
+
+v3.8.0
+- Support multiple display-names and case insensitive tvg-id is always first, next tvg-name and then channel name find order
+- Support full timeshift range of -12 to +14 hours
+- Some providers incorrectly use tvg-ID instead of tvg-id
+- Channel groups not being clared when reading next channel
+- support episode-num for both xmltv_ns and onscreen systems in epg entry
+- Update readme for settings, supported M3U and XMLTV formats and genres
+- support star rating in epg entry
+- support firstAired and year in epg entry
+- Update OSX build scripts
+- support multiple actor/director/writers elements in epg entry
+- URLEncode and append .png ext for remote logos built from channel name
+- Timing for Playlist and EPG load
+- Removed channels loaded popup
+
+v3.7.2
+- Update build system version
+- Change header include way
+- Add AppVeyor for Windows related build tests
+
+v3.7.1
+- Fix OSX build script
+
+v3.7.0
+- Support EXTVCOPT in m3u
+- Build helper script for OSX
+- Add appveyor.yml
+
+v3.6.0
+- Add support for sub-title/actor/director/writer
+
+v3.5.8
+- Fix wrong EPG times due to DST on Windows
+
+v3.5.7
+- Correctly show build version in Kodi
+
+v3.5.6
+- Updated language files from Transifex
+
+v3.5.5
+- Bump zlib to version 1.2.11
+
+v3.5.4
+- Remove bundled rapidxml
+
+v3.5.2
+- Add support for #EXT-X-PLAYLIST-TYPE in M3U
+
+v3.5.1
+- Updated to PVR addon API v5.10.1
+
+v3.5.0
+- Updated to PVR addon API v5.10.0
+
+v3.4.3
+- Updated to PVR addon API v5.9.0
+
+v3.4.1
+- Add support for KODIPROP in M3U (for inputstream.adaptive)
+
+v3.4.0
+- Updated to PVR addon API v5.8.0
+
+v3.3.3
+- Fixed multithreading issues
+
+v3.3.0
+- Updated to PVR addon API v5.7.0
+
+v3.2.2
+- Updated to PVR addon API v5.6.0
+
+v3.2.1
+- Added support for multiple groups per channel, separated by semicolon
+
+v3.2.0
+- Updated to PVR addon API v5.5.0
+
+v3.1.1
+- removed line length limitation when parsing M3U files
+
+v3.1.0
+- Updated to PVR addon API v5.3.0
+
+v3.0.6
+- Remove of never used addon interface function
+
+v3.0.5
+- Update Debian package control
+- PVR addon callback way changes
+
+v3.0.4
+- Removed old no more needed version functions
+
+v3.0.3
+- set dependency versions automatic during build
+- removed never used kodi to addon functions
+- build system fixes
+
+v3.0.2
+- Fix: Change the line lenght to 4k
+
+v3.0.0
+- Initial Kodi v18 version
 
 v2.4.4
 - Fix: Handle time offset in EPG programme start and end times.
