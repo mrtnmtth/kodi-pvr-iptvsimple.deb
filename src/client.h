@@ -23,8 +23,8 @@
  *
  */
 
-#include "libXBMC_addon.h"
-#include "libXBMC_pvr.h"
+#include "kodi/libXBMC_addon.h"
+#include "kodi/libXBMC_pvr.h"
 
 #define M3U_FILE_NAME          "iptv.m3u.cache"
 #define TVG_FILE_NAME          "xmltv.xml.cache"
@@ -44,6 +44,8 @@ extern CHelper_libXBMC_pvr          *PVR;
 extern std::string g_strM3UPath;
 extern std::string g_strTvgPath;
 extern std::string g_strLogoPath;
+extern std::string g_userAgent;
+extern int         g_logoPathType;
 extern int         g_iEPGTimeShift;
 extern int         g_iStartNumber;
 extern bool        g_bTSOverride;
